@@ -10,6 +10,7 @@ object Bus {
     private val main = Handler(Looper.getMainLooper())
 
     @Volatile var state: Int = JarvisService.IDLE
+        private set
     @Volatile var level: Float = 0f
 
     val lines = ArrayList<Line>()
