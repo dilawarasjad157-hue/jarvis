@@ -97,7 +97,7 @@ class Voice(private val ctx: Context) {
                     }
 
                     override fun onResults(results: Bundle?) {
-                        val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION_ARRAY)
+                        val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         finish(list?.firstOrNull())
                     }
 
