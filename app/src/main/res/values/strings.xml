@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">J.A.R.V.I.S.</string>
+    <string name="service_desc">J.A.R.V.I.S. aap ki awaaz sun kar phone ki screen padhta hai aur apps ko control karta hai (call, SMS, apps kholna, tap, type). Sirf aap ke kehne par kaam karta hai.</string>
+    <string name="tile_label">JARVIS</string>
+</resources>
