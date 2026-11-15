@@ -233,7 +233,7 @@ class SetupActivity : Activity() {
         b.orientation = LinearLayout.VERTICAL
         val p = Ui.dp(this, 14)
         b.setPadding(p, p, p, p)
-        b.background = Ui.round(this, Ui.GLASS, 16f, Color.argb(80, 25, 211, 232), 1f)
+        b.background = Ui.round(this, Ui.GLASS, 16f, Color.argb(80, 0, 212, 255), 1f)
         return b
     }
 
@@ -245,7 +245,7 @@ class SetupActivity : Activity() {
         refreshers.add {
             box.background = Ui.round(
                 this, Ui.GLASS, 16f,
-                if (check()) Color.argb(160, 61, 242, 160) else Color.argb(80, 25, 211, 232), 1f
+                if (check()) Color.argb(160, 61, 242, 160) else Color.argb(80, 0, 212, 255), 1f
             )
         }
     }

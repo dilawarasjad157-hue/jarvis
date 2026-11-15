@@ -29,12 +29,12 @@ class Backdrop(ctx: Context) : View(ctx) {
         val h = height.toFloat()
         val t = System.currentTimeMillis() / 1000f
 
-        p.shader = LinearGradient(0f, 0f, 0f, h, Color.parseColor("#04070F"), Color.parseColor("#0A1426"), Shader.TileMode.CLAMP)
+        p.shader = LinearGradient(0f, 0f, 0f, h, Color.parseColor("#00060A"), Color.parseColor("#001520"), Shader.TileMode.CLAMP)
         p.style = Paint.Style.FILL
         c.drawRect(0f, 0f, w, h, p)
         p.shader = RadialGradient(
             w / 2f, h * 0.30f, w * 0.9f,
-            intArrayOf(Color.argb(60, 25, 211, 232), Color.TRANSPARENT), null, Shader.TileMode.CLAMP
+            intArrayOf(Color.argb(60, 0, 212, 255), Color.TRANSPARENT), null, Shader.TileMode.CLAMP
         )
         c.drawRect(0f, 0f, w, h, p)
         p.shader = null
@@ -60,9 +60,23 @@ class Backdrop(ctx: Context) : View(ctx) {
 
         // scan line
         val sy = ((t * 0.12f) % 1f) * h
-        p.shader = LinearGradient(0f, sy - 60 * d, 0f, sy, Color.TRANSPARENT, Color.argb(40, 25, 211, 232), Shader.TileMode.CLAMP)
+        p.shader = LinearGradient(0f, sy - 60 * d, 0f, sy, Color.TRANSPARENT, Color.argb(40, 0, 212, 255), Shader.TileMode.CLAMP)
         c.drawRect(0f, sy - 60 * d, w, sy, p)
         p.shader = null
+
+        // HUD corner brackets
+        val m = 10 * d
+        val len = 28 * d
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 2f * d
+        p.strokeCap = Paint.Cap.SQUARE
+        p.color = Color.argb(190, 0, 212, 255)
+        c.drawLine(m, m, m + len, m, p); c.drawLine(m, m, m, m + len, p)
+        c.drawLine(w - m, m, w - m - len, m, p); c.drawLine(w - m, m, w - m, m + len, p)
+        c.drawLine(m, h - m, m + len, h - m, p); c.drawLine(m, h - m, m, h - m - len, p)
+        p.color = Color.argb(220, 255, 107, 0)
+        c.drawLine(w - m, h - m, w - m - len, h - m, p); c.drawLine(w - m, h - m, w - m, h - m - len, p)
+        p.strokeCap = Paint.Cap.BUTT
 
         postInvalidateOnAnimation()
     }

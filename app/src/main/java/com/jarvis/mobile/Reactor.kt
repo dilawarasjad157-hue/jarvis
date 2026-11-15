@@ -20,7 +20,7 @@ class ReactorPainter(private val detailed: Boolean) {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val rect = RectF()
     private val eval = ArgbEvaluator()
-    private var cur = Color.parseColor("#19D3E8")
+    private var cur = Color.parseColor("#00D4FF")
     private var lvl = 0f
     private var lastMs = 0L
     private var spin = 0f      // degrees, drives the rotating arcs
@@ -29,10 +29,10 @@ class ReactorPainter(private val detailed: Boolean) {
     companion object {
         fun colorFor(state: Int): Int = Color.parseColor(
             when (state) {
-                JarvisService.LISTENING -> "#FFB020"
+                JarvisService.LISTENING -> "#FF8A1F"
                 JarvisService.THINKING -> "#B26BFF"
-                JarvisService.SPEAKING -> "#3DF2A0"
-                else -> "#19D3E8"
+                JarvisService.SPEAKING -> "#00E89A"
+                else -> "#00D4FF"
             }
         )
     }
@@ -105,6 +105,14 @@ class ReactorPainter(private val detailed: Boolean) {
         rect.set(cx - r * 0.64f, cy - r * 0.64f, cx + r * 0.64f, cy + r * 0.64f)
         p.color = alpha(col, 0.60f)
         for (i in 0 until 4) c.drawArc(rect, -spin * 1.6f + i * 90f, 38f, false, p)
+
+        // 4b. orange accent arcs on the outer rim (Mark-style HUD detail)
+        if (detailed) {
+            p.strokeWidth = r * 0.018f
+            rect.set(cx - r * 0.975f, cy - r * 0.975f, cx + r * 0.975f, cy + r * 0.975f)
+            p.color = alpha(Color.parseColor("#FF6B00"), 0.85f)
+            for (i in 0 until 2) c.drawArc(rect, -spin * 0.5f + i * 180f, 26f, false, p)
+        }
 
         // 5. thinking sweep
         if (state == JarvisService.THINKING) {

@@ -2,6 +2,11 @@ package com.jarvis.mobile
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
+import android.util.Base64
+import kotlinx.coroutines.delay
+import org.json.JSONArray
 import android.media.MediaPlayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -71,7 +76,126 @@ class Voice(private val ctx: Context) {
                 return
             }
         }
+        // Gemini ki mard wali awaaz (Charon) - English aur Urdu dono mein. Fail ho to phone ki awaaz.
+        if (clean.isNotEmpty() && System.currentTimeMillis() > geminiDownUntil) {
+            val pcm = withContext(Dispatchers.IO) { geminiPcm(clean.take(600)) }
+            if (pcm != null) {
+                playPcm(pcm)
+                return
+            }
+        }
         speakLocal(raw)
+    }
+
+    private val geminiVoice = "Charon"
+    private val geminiModels = listOf("gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts", "gemini-2.5-flash-tts")
+    private var geminiModel: String? = null
+    private var geminiDownUntil = 0L
+    private var track: AudioTrack? = null
+
+    /** Raw 24 kHz 16-bit mono audio from Gemini TTS, cached on disk. Null on any problem. */
+    private fun geminiPcm(text: String): ByteArray? {
+        val key = Prefs.apiKey(ctx)
+        if (key.isBlank()) return null
+        val dir = File(ctx.cacheDir, "gvoice").apply { mkdirs() }
+        val hash = MessageDigest.getInstance("MD5").digest((geminiVoice + text).toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val f = File(dir, "$hash.pcm")
+        if (f.exists() && f.length() > 0) return f.readBytes()
+        dir.listFiles()?.sortedBy { it.lastModified() }?.dropLast(40)?.forEach { it.delete() }
+        val order = geminiModel?.let { listOf(it) } ?: geminiModels
+        try {
+            for (m in order) {
+                val pcm = geminiCall(m, text, key)
+                if (pcm != null && pcm.isNotEmpty()) {
+                    geminiModel = m
+                    f.writeBytes(pcm)
+                    return pcm
+                }
+            }
+        } catch (e: Exception) {
+            // network problem
+        }
+        geminiDownUntil = System.currentTimeMillis() + 45000
+        return null
+    }
+
+    private fun geminiCall(model: String, text: String, key: String): ByteArray? {
+        val conn = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
+            .openConnection() as HttpURLConnection
+        try {
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 8000
+            conn.readTimeout = 25000
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("x-goog-api-key", key)
+            val part = JSONObject().put("text", "Say in a calm, deep, polite and confident tone: $text")
+            val body = JSONObject()
+                .put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(part))))
+                .put(
+                    "generationConfig", JSONObject()
+                        .put("responseModalities", JSONArray().put("AUDIO"))
+                        .put(
+                            "speechConfig", JSONObject().put(
+                                "voiceConfig", JSONObject().put(
+                                    "prebuiltVoiceConfig", JSONObject().put("voiceName", geminiVoice)
+                                )
+                            )
+                        )
+                )
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            if (conn.responseCode !in 200..299) return null
+            val resp = conn.inputStream.bufferedReader().use { it.readText() }
+            val parts = JSONObject(resp).getJSONArray("candidates").getJSONObject(0)
+                .getJSONObject("content").getJSONArray("parts")
+            for (i in 0 until parts.length()) {
+                val o = parts.getJSONObject(i)
+                val inl = o.optJSONObject("inlineData") ?: o.optJSONObject("inline_data")
+                val b64 = inl?.optString("data") ?: ""
+                if (b64.isNotEmpty()) return Base64.decode(b64, Base64.DEFAULT)
+            }
+            return null
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private suspend fun playPcm(pcm: ByteArray) {
+        val frames = pcm.size / 2
+        if (frames <= 0) return
+        val at = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(24000)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build()
+            )
+            .setBufferSizeInBytes(pcm.size)
+            .setTransferMode(AudioTrack.MODE_STATIC)
+            .build()
+        track = at
+        try {
+            at.write(pcm, 0, pcm.size)
+            at.play()
+            val limit = frames * 1000L / 24000L + 1500L
+            val t0 = System.currentTimeMillis()
+            while (at.playbackHeadPosition < frames - 240 && System.currentTimeMillis() - t0 < limit) {
+                delay(40)
+                if (at.playState != AudioTrack.PLAYSTATE_PLAYING) break
+            }
+        } finally {
+            try { at.stop() } catch (e: Exception) { }
+            try { at.release() } catch (e: Exception) { }
+            if (track === at) track = null
+        }
     }
 
     private var player: MediaPlayer? = null
@@ -346,6 +470,7 @@ class Voice(private val ctx: Context) {
         tts?.stop()
         try { player?.release() } catch (e: Exception) { }
         player = null
+        try { track?.stop() } catch (e: Exception) { }
         main.post {
             try {
                 recognizer?.destroy()

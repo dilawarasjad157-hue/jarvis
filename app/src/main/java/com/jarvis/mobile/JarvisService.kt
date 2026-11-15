@@ -196,7 +196,7 @@ class JarvisService : AccessibilityService() {
         }
         if (contOn) {
             // Always-on mode is already listening: a tap just means "talk now, no wake word needed".
-            convoUntil = System.currentTimeMillis() + 15000
+            convoUntil = System.currentTimeMillis() + 7000
             return
         }
         startJob {
@@ -225,7 +225,10 @@ class JarvisService : AccessibilityService() {
     private fun extractCommand(heard: String, inConvo: Boolean): String? {
         val m = wake.find(heard)
         if (m != null) return heard.removeRange(m.range).trim(' ', ',', '.', '!', '?', '-')
-        return if (inConvo) heard.trim() else null
+        // Bina wake word ke sirf tab suno jab abhi baat chal rahi ho, aur kam se kam 2 lafz hon
+        // (taake background ki ek-aadh awaaz command na ban jaye).
+        val t = heard.trim()
+        return if (inConvo && t.split(Regex("\\s+")).size >= 2) t else null
     }
 
     fun isAlwaysOn(): Boolean = contOn
@@ -287,12 +290,12 @@ class JarvisService : AccessibilityService() {
             startJob {
                 setState(SPEAKING)
                 v.speak("Yes, sir?")
-                convoUntil = System.currentTimeMillis() + 12000
+                convoUntil = System.currentTimeMillis() + 7000
             }
         } else {
             startJob {
                 runCommand(cmd)
-                convoUntil = System.currentTimeMillis() + 12000
+                convoUntil = System.currentTimeMillis() + 7000
             }
         }
     }
@@ -342,7 +345,7 @@ class JarvisService : AccessibilityService() {
             val bg = GradientDrawable()
             bg.cornerRadius = 18 * d
             bg.setColor(Color.argb(225, 6, 14, 28))
-            bg.setStroke((1.2f * d).toInt(), Color.argb(170, 25, 211, 232))
+            bg.setStroke((1.2f * d).toInt(), Color.argb(170, 0, 212, 255))
             tv.background = bg
             tv.maxWidth = (resources.displayMetrics.widthPixels * 0.88f).toInt()
             val lp = WindowManager.LayoutParams(

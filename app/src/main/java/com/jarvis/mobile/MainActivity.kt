@@ -6,7 +6,10 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
+import android.os.BatteryManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -19,6 +22,9 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** Home screen: animated reactor, live conversation, quick commands and a typing box. */
 class MainActivity : Activity() {
@@ -26,6 +32,14 @@ class MainActivity : Activity() {
     private lateinit var scroll: ScrollView
     private lateinit var status: TextView
     private lateinit var input: EditText
+    private lateinit var info: TextView
+    private val tick = Handler(Looper.getMainLooper())
+    private val clock = object : Runnable {
+        override fun run() {
+            updateInfo()
+            tick.postDelayed(this, 1000)
+        }
+    }
 
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -54,7 +68,7 @@ class MainActivity : Activity() {
         header.addView(title, LinearLayout.LayoutParams(0, WRAP, 1f))
         val gear = Ui.text(this, "⚙  SETUP", 12f, Ui.CYAN, true)
         gear.letterSpacing = 0.1f
-        gear.background = Ui.round(this, Color.argb(60, 25, 211, 232), 20f, Ui.CYAN, 1f)
+        gear.background = Ui.round(this, Color.argb(60, 0, 212, 255), 20f, Ui.CYAN, 1f)
         gear.setPadding(Ui.dp(this, 14), Ui.dp(this, 7), Ui.dp(this, 14), Ui.dp(this, 7))
         gear.setOnClickListener { startActivity(Intent(this, SetupActivity::class.java)) }
         header.addView(gear)
@@ -66,7 +80,15 @@ class MainActivity : Activity() {
         status.setOnClickListener {
             if (JarvisService.instance == null) startActivity(Intent(this, SetupActivity::class.java))
         }
-        col.addView(status)
+        info = Ui.text(this, "", 12f, Ui.DIM, true)
+        info.letterSpacing = 0.08f
+        info.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        info.gravity = Gravity.END
+        info.setPadding(0, Ui.dp(this, 6), 0, 0)
+        val statusRow = LinearLayout(this)
+        statusRow.addView(status, LinearLayout.LayoutParams(0, WRAP, 1f))
+        statusRow.addView(info, LinearLayout.LayoutParams(WRAP, WRAP))
+        col.addView(statusRow, LinearLayout.LayoutParams(MATCH, WRAP))
 
         // ---- reactor
         val hud = HudView(this)
@@ -85,6 +107,11 @@ class MainActivity : Activity() {
         col.addView(hint, LinearLayout.LayoutParams(MATCH, WRAP))
 
         // ---- conversation
+        val convLabel = Ui.text(this, "//  LIVE FEED", 10f, Ui.DIM, true)
+        convLabel.letterSpacing = 0.25f
+        convLabel.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        convLabel.setPadding(0, Ui.dp(this, 4), 0, 0)
+        col.addView(convLabel, LinearLayout.LayoutParams(MATCH, WRAP))
         scroll = ScrollView(this)
         scroll.isVerticalScrollBarEnabled = false
         chat = LinearLayout(this)
@@ -107,7 +134,7 @@ class MainActivity : Activity() {
             "📸 Screenshot" to "Take a screenshot"
         ).forEach { (label, cmd) ->
             val chip = Ui.text(this, label, 12f, Ui.TEXT)
-            chip.background = Ui.round(this, Ui.GLASS, 18f, Color.argb(110, 25, 211, 232), 1f)
+            chip.background = Ui.round(this, Ui.GLASS, 18f, Color.argb(110, 0, 212, 255), 1f)
             chip.setPadding(Ui.dp(this, 14), Ui.dp(this, 8), Ui.dp(this, 14), Ui.dp(this, 8))
             chip.setOnClickListener { runCommand(cmd) }
             val lp = LinearLayout.LayoutParams(WRAP, WRAP)
@@ -150,6 +177,8 @@ class MainActivity : Activity() {
         Bus.onLine = { addBubble(it, true) }
         Bus.onState = { updateStatus() }
         updateStatus()
+        tick.removeCallbacks(clock)
+        tick.post(clock)
         // Always-on mic: (re)start it while the app is visible, which is when Android allows it.
         if (Prefs.alwaysOn(this) && JarvisService.instance != null) {
             JarvisService.instance?.ensureMic()
@@ -162,9 +191,19 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() {
+        tick.removeCallbacks(clock)
         Bus.onLine = null
         Bus.onState = null
         super.onStop()
+    }
+
+    private fun updateInfo() {
+        val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+        val bat = try {
+            (getSystemService(Context.BATTERY_SERVICE) as BatteryManager)
+                .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        } catch (e: Exception) { -1 }
+        info.text = if (bat in 0..100) "$time  ·  BAT $bat%" else time
     }
 
     private fun updateStatus() {
@@ -210,9 +249,9 @@ class MainActivity : Activity() {
         tv.maxWidth = (resources.displayMetrics.widthPixels * 0.82f).toInt()
         tv.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 10))
         tv.background = if (l.mine) {
-            Ui.round(this, Color.argb(70, 25, 211, 232), 16f, Color.argb(160, 25, 211, 232), 1f)
+            Ui.round(this, Color.argb(60, 255, 107, 0), 16f, Color.argb(170, 255, 107, 0), 1f)
         } else {
-            Ui.round(this, Ui.GLASS, 16f, Color.argb(90, 61, 242, 160), 1f)
+            Ui.round(this, Ui.GLASS, 16f, Color.argb(130, 0, 212, 255), 1f)
         }
         val lp = LinearLayout.LayoutParams(WRAP, WRAP)
         lp.gravity = if (l.mine) Gravity.END else Gravity.START
