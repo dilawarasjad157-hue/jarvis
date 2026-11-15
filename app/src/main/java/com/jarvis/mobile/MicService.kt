@@ -10,12 +10,14 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 
 /**
  * Keeps the app in "foreground" state so Android lets the microphone keep working in the
  * background. The actual listening happens in JarvisService (always-on loop).
  */
 class MicService : Service() {
+    private var lock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -45,7 +47,24 @@ class MicService : Service() {
             // Android refused (app not visible / mic permission missing). Stop quietly.
             stopSelf()
         }
+        try {
+            if (lock == null) {
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                lock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "jarvis:wake").apply { setReferenceCounted(false) }
+            }
+            if (lock?.isHeld != true) lock?.acquire()
+        } catch (e: Exception) {
+        }
         return START_STICKY
+    }
+
+    override fun onDestroy() {
+        try {
+            if (lock?.isHeld == true) lock?.release()
+        } catch (e: Exception) {
+        }
+        lock = null
+        super.onDestroy()
     }
 
     companion object {

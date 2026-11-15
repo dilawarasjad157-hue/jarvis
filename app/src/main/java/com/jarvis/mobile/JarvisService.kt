@@ -59,6 +59,7 @@ class JarvisService : AccessibilityService() {
     private var orb: Orb? = null
     private var job: Job? = null
     private var contOn = false
+    private var wakeMode = false   // true = on-device wake word, false = old always-listening loop
 
     @Volatile
     private var convoUntil = 0L
@@ -103,6 +104,8 @@ class JarvisService : AccessibilityService() {
 
     private fun cleanup() {
         voice?.stopContinuous()
+        WakeWord.release()
+        wakeMode = false
         contOn = false
         job?.cancel()
         scope.cancel()
@@ -195,8 +198,8 @@ class JarvisService : AccessibilityService() {
             return
         }
         if (contOn) {
-            // Always-on mode is already listening: a tap just means "talk now, no wake word needed".
-            convoUntil = System.currentTimeMillis() + 7000
+            // Always-on mode is already waiting: a tap just means "talk now, no wake word needed".
+            if (wakeMode) onWakeWord() else convoUntil = System.currentTimeMillis() + 7000
             return
         }
         startJob {
@@ -233,19 +236,20 @@ class JarvisService : AccessibilityService() {
 
     fun isAlwaysOn(): Boolean = contOn
 
-    private fun idleState() = if (contOn) LISTENING else IDLE
+    private fun idleState() = if (contOn && !wakeMode) LISTENING else IDLE
 
     /** Runs one conversation job. The always-on mic is paused meanwhile (so Jarvis never hears himself). */
     private fun startJob(block: suspend () -> Unit) {
         job?.cancel()
         voice?.pauseContinuous()
+        if (wakeMode) WakeWord.stop()
         val j = scope.launch { block() }
         job = j
         j.invokeOnCompletion {
             ui.post {
                 if (job === j) {
                     setState(idleState())
-                    if (contOn) voice?.resumeContinuous()
+                    if (contOn) resumeListening()
                 }
             }
         }
@@ -269,15 +273,77 @@ class JarvisService : AccessibilityService() {
         val v = voice ?: return
         MicService.start(this)
         contOn = true
+        WakeWord.onFailure = { ui.post { wakeFailed() } }
+        if (WakeWord.start(this) { ui.post { onWakeWord() } }) {
+            wakeMode = true
+            if (job?.isActive != true) setState(IDLE)
+            return
+        }
+        wakeMode = false
         v.startContinuous { heard -> onHeard(heard) }
         if (job?.isActive != true) setState(LISTENING)
     }
 
     fun stopLoop() {
         contOn = false
+        WakeWord.release()
+        wakeMode = false
         voice?.stopContinuous()
         MicService.stop(this)
         if (job?.isActive != true) setState(IDLE)
+    }
+
+    /** Restart the listener (e.g. after changing settings). */
+    fun restartLoop() {
+        if (!contOn) return
+        contOn = false
+        WakeWord.release()
+        wakeMode = false
+        voice?.stopContinuous()
+        startLoop()
+    }
+
+    /** The wake-word model could not be loaded (no internet on first run?): use the older listening loop instead. */
+    private fun wakeFailed() {
+        if (!contOn || !wakeMode) return
+        wakeMode = false
+        Bus.post(false, "Wake word start nahi hua (${WakeWord.lastError}). Purane tareeqe se sun raha hun.")
+        voice?.startContinuous { heard -> onHeard(heard) }
+        if (job?.isActive != true) setState(LISTENING)
+    }
+
+    private fun resumeListening() {
+        if (wakeMode) {
+            WakeWord.start(this) { ui.post { onWakeWord() } }
+        } else {
+            voice?.resumeContinuous()
+        }
+    }
+
+    private fun beep() {
+        try {
+            val tg = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 90)
+            tg.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 150)
+            ui.postDelayed({ try { tg.release() } catch (e: Exception) { } }, 500)
+        } catch (e: Exception) {
+        }
+    }
+
+    /** Jarvis was heard (on-device). Beep, listen once for the command, answer, then go back to waiting. */
+    private fun onWakeWord() {
+        if (job?.isActive == true) return
+        val v = voice ?: return
+        startJob {
+            beep()
+            delay(260)
+            setState(LISTENING)
+            val said = v.listen()
+            if (said.isNullOrBlank()) {
+                setState(idleState())
+                return@startJob
+            }
+            runCommand(said)
+        }
     }
 
     /** Called every time the always-on recogniser understood a sentence. */

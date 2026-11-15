@@ -15,6 +15,10 @@ object Prefs {
         sp(c).edit().putString("key", v.trim()).apply()
     }
 
+    /** Free AccessKey from console.picovoice.ai - needed for the Jarvis wake word. */
+    fun picoKey(c: Context): String = sp(c).getString("pico_key", "") ?: ""
+    fun setPicoKey(c: Context, v: String) = sp(c).edit().putString("pico_key", v.trim()).apply()
+
     /** Speech recognition language, e.g. en-US, ur-PK, hi-IN. */
     fun lang(c: Context): String = sp(c).getString("lang", "en-US") ?: "en-US"
 

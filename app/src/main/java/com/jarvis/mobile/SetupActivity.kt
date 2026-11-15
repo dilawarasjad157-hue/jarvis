@@ -182,7 +182,7 @@ class SetupActivity : Activity() {
         // ---- always-on microphone
         val ao = cardBox()
         ao.addView(Ui.text(this, "8 · Hamesha sunna (hands-free)", 15f, Ui.TEXT, true))
-        ao.addView(Ui.text(this, "ON ho to button dabane ki zaroorat nahi: bas \"Jarvis, battery kitni hai?\" bolein. Jawab ke baad 12 second tak bina \"Jarvis\" kehe baat jari rakh sakte hain. Ek notification dikhegi aur battery thori zyada lagegi.", 12f, Ui.DIM))
+        ao.addView(Ui.text(this, "Sirf \"Jarvis\" bolne par hi mic on hota hai (beep ke baad apni baat kahein), screen off ya app band hone par bhi. Pehli baar ek chhota model (~40 MB) download hota hai, internet chahiye. Ek notification dikhegi aur battery thori lagegi.", 12f, Ui.DIM))
         val swAo = Switch(this)
         swAo.text = "Mic hamesha ON"
         swAo.setTextColor(Ui.TEXT)
