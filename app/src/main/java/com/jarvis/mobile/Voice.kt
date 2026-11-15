@@ -284,11 +284,9 @@ class Voice(private val ctx: Context) {
     private fun cBegin() {
         if (!cOn || cPaused) return
         if (!SpeechRecognizer.isRecognitionAvailable(ctx)) return
-        var r = cRec
-        if (r == null) {
-            r = SpeechRecognizer.createSpeechRecognizer(ctx)
-            cRec = r
-            r.setRecognitionListener(object : RecognitionListener {
+        val r: SpeechRecognizer = cRec ?: SpeechRecognizer.createSpeechRecognizer(ctx).also { nr ->
+            cRec = nr
+            nr.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {}
                 override fun onBeginningOfSpeech() {}
                 override fun onRmsChanged(rmsdB: Float) {
