@@ -20,21 +20,30 @@ class JarvisError(msg: String) : Exception(msg)
  */
 class Gemini(private val ctx: Context) {
     // Fast lite model first. 2.5 models only work for old accounts; they are kept as fallbacks.
-    private val models = listOf("gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.5-flash")
+    private val models = listOf("gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-flash-latest")
     private var good = 0
+
+    private fun shortMsg(body: String): String {
+        val m = try {
+            JSONObject(body).optJSONObject("error")?.optString("message") ?: body
+        } catch (e: Exception) {
+            body
+        }
+        return m.replace('\n', ' ').take(70)
+    }
 
     suspend fun generate(contents: JSONArray, system: String, tools: JSONArray?): JSONObject =
         withContext(Dispatchers.IO) {
             val key = Prefs.apiKey(ctx)
             if (key.isBlank()) throw JarvisError("Gemini key set nahi hai. Jarvis app kholo aur key daalo.")
-            var lastErr = "unknown"
+            val errs = ArrayList<String>()
             for (i in models.indices) {
                 val idx = (good + i) % models.size
                 val m = models[idx]
                 val gen = JSONObject().put("maxOutputTokens", 1024)
                 if (m.contains("2.5")) {
                     gen.put("thinkingConfig", JSONObject().put("thinkingBudget", 0))
-                } else if (m.contains("latest")) {
+                } else if (m == "gemini-flash-latest") {
                     // newer Flash models think by default: keep it short so replies are fast
                     gen.put("thinkingConfig", JSONObject().put("thinkingLevel", "low"))
                 }
@@ -60,7 +69,7 @@ class Gemini(private val ctx: Context) {
                         good = idx
                         return@withContext JSONObject(text)
                     }
-                    lastErr = "$code ${text.take(160)}"
+                    errs.add("$m $code: ${shortMsg(text)}")
                     if (code == 400 && text.contains("API key", ignoreCase = true)) {
                         throw JarvisError("Gemini key galat hai. App mein dobara daalo.")
                     }
@@ -70,12 +79,12 @@ class Gemini(private val ctx: Context) {
                     // 404 / 429 / 5xx: try the next model
                 } catch (e: java.io.IOException) {
                     // timeout / no network on this model: try the next one
-                    lastErr = "$m: ${e.message}"
+                    errs.add("$m: ${e.message}")
                 } finally {
                     conn.disconnect()
                 }
             }
-            throw JarvisError("Gemini abhi jawab nahi de raha (limit ya rush). Thori der baad try karo. $lastErr")
+            throw JarvisError("Gemini jawab nahi de raha. " + errs.joinToString(" | "))
         }
 }
 

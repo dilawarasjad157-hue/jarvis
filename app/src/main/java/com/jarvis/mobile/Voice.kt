@@ -228,6 +228,121 @@ class Voice(private val ctx: Context) {
         }
     }
 
+    // ------------------------------------------------------------ always-on listening
+    // One recogniser that restarts itself immediately, so the mic stays on even when nobody speaks.
+
+    private var cOn = false
+    private var cPaused = false
+    private var cRec: SpeechRecognizer? = null
+    private var cCb: ((String) -> Unit)? = null
+    private var cFails = 0
+    private var cStart = 0L
+    private var cToken = 0
+
+    fun startContinuous(cb: (String) -> Unit) {
+        main.post {
+            cCb = cb
+            cOn = true
+            cPaused = false
+            cFails = 0
+            cBegin()
+        }
+    }
+
+    fun stopContinuous() {
+        cOn = false
+        main.post {
+            cCb = null
+            cDestroy()
+        }
+    }
+
+    /** Silence the always-on mic while Jarvis talks or runs a command. */
+    fun pauseContinuous() {
+        cPaused = true
+        main.post { cDestroy() }
+    }
+
+    fun resumeContinuous() {
+        main.post {
+            if (cOn) {
+                cPaused = false
+                cBegin()
+            }
+        }
+    }
+
+    private fun cDestroy() {
+        cToken++
+        try {
+            cRec?.destroy()
+        } catch (e: Exception) {
+        }
+        cRec = null
+    }
+
+    private fun cBegin() {
+        if (!cOn || cPaused) return
+        if (!SpeechRecognizer.isRecognitionAvailable(ctx)) return
+        var r = cRec
+        if (r == null) {
+            r = SpeechRecognizer.createSpeechRecognizer(ctx)
+            cRec = r
+            r.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {}
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {
+                    Bus.level = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
+                }
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+                override fun onError(error: Int) {
+                    cAgain(error)
+                }
+
+                override fun onResults(results: Bundle?) {
+                    val t = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                    if (!t.isNullOrBlank()) cCb?.invoke(t)
+                    cAgain(0)
+                }
+
+                override fun onPartialResults(partialResults: Bundle?) {}
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            })
+        }
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Prefs.lang(ctx))
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+        }
+        cStart = System.currentTimeMillis()
+        try {
+            r.startListening(intent)
+        } catch (e: Exception) {
+            cDestroy()
+            cAgain(SpeechRecognizer.ERROR_CLIENT)
+        }
+    }
+
+    /** Restart listening right away (a short pause only after repeated instant failures). */
+    private fun cAgain(error: Int) {
+        if (!cOn || cPaused) return
+        val quick = System.currentTimeMillis() - cStart < 700
+        if (error != 0 && quick) cFails++ else cFails = 0
+        var wait = 40L
+        if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY || error == SpeechRecognizer.ERROR_CLIENT) {
+            cDestroy()
+            wait = 300L
+        } else if (cFails > 3) {
+            wait = 3000L
+        } else if (error != 0) {
+            wait = 80L
+        }
+        val tk = ++cToken
+        main.postDelayed({ if (tk == cToken) cBegin() }, wait)
+    }
+
     /** Stop talking and listening right now (barge-in). */
     fun stopAll() {
         tts?.stop()

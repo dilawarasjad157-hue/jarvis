@@ -58,7 +58,7 @@ class JarvisService : AccessibilityService() {
     private var brain: Brain? = null
     private var orb: Orb? = null
     private var job: Job? = null
-    private var loop: Job? = null
+    private var contOn = false
 
     @Volatile
     private var convoUntil = 0L
@@ -78,7 +78,8 @@ class JarvisService : AccessibilityService() {
         val v = Voice(this)
         voice = v
         brain = Brain(this, Tools(this, v))
-        showOrb()
+        // (floating orb button removed on purpose)
+        setState(IDLE)
         if (Prefs.alwaysOn(this)) startLoop()
     }
 
@@ -101,8 +102,8 @@ class JarvisService : AccessibilityService() {
     }
 
     private fun cleanup() {
-        loop?.cancel()
-        loop = null
+        voice?.stopContinuous()
+        contOn = false
         job?.cancel()
         scope.cancel()
         try {
@@ -193,21 +194,21 @@ class JarvisService : AccessibilityService() {
             setState(IDLE)
             return
         }
-        if (loop?.isActive == true) {
+        if (contOn) {
             // Always-on mode is already listening: a tap just means "talk now, no wake word needed".
             convoUntil = System.currentTimeMillis() + 15000
             return
         }
-        job = scope.launch {
+        startJob {
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 v.speak("Please allow the microphone permission in the Jarvis app.")
-                return@launch
+                return@startJob
             }
             setState(LISTENING)
             val said = v.listen()
             if (said.isNullOrBlank()) {
-                setState(IDLE)
-                return@launch
+                setState(idleState())
+                return@startJob
             }
             runCommand(said)
         }
@@ -227,7 +228,25 @@ class JarvisService : AccessibilityService() {
         return if (inConvo) heard.trim() else null
     }
 
-    fun isAlwaysOn(): Boolean = loop?.isActive == true
+    fun isAlwaysOn(): Boolean = contOn
+
+    private fun idleState() = if (contOn) LISTENING else IDLE
+
+    /** Runs one conversation job. The always-on mic is paused meanwhile (so Jarvis never hears himself). */
+    private fun startJob(block: suspend () -> Unit) {
+        job?.cancel()
+        voice?.pauseContinuous()
+        val j = scope.launch { block() }
+        job = j
+        j.invokeOnCompletion {
+            ui.post {
+                if (job === j) {
+                    setState(idleState())
+                    if (contOn) voice?.resumeContinuous()
+                }
+            }
+        }
+    }
 
     /** Turn the always-listening mode on/off. Call from a visible activity so Android allows the mic. */
     fun setAlwaysOn(on: Boolean) {
@@ -235,7 +254,7 @@ class JarvisService : AccessibilityService() {
         if (on) startLoop() else stopLoop()
     }
 
-    /** Re-assert the foreground mic service and the loop (safe to call repeatedly). */
+    /** Re-assert the foreground mic service and the listener (safe to call repeatedly). */
     fun ensureMic() {
         if (!Prefs.alwaysOn(this)) return
         MicService.start(this)
@@ -243,60 +262,44 @@ class JarvisService : AccessibilityService() {
     }
 
     fun startLoop() {
-        if (loop?.isActive == true || !Prefs.alwaysOn(this)) return
+        if (contOn || !Prefs.alwaysOn(this)) return
+        val v = voice ?: return
         MicService.start(this)
-        loop = scope.launch { listenLoop() }
+        contOn = true
+        v.startContinuous { heard -> onHeard(heard) }
+        if (job?.isActive != true) setState(LISTENING)
     }
 
     fun stopLoop() {
-        loop?.cancel()
-        loop = null
+        contOn = false
+        voice?.stopContinuous()
         MicService.stop(this)
         if (job?.isActive != true) setState(IDLE)
     }
 
-    private suspend fun listenLoop() {
+    /** Called every time the always-on recogniser understood a sentence. */
+    private fun onHeard(heard: String) {
+        if (job?.isActive == true) return
         val v = voice ?: return
-        while (true) {
-            if (job?.isActive == true) { delay(300); continue }
-            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                delay(3000); continue
+        val inConvo = System.currentTimeMillis() < convoUntil
+        val cmd = extractCommand(heard, inConvo) ?: return
+        if (cmd.isEmpty()) {
+            startJob {
+                setState(SPEAKING)
+                v.speak("Yes, sir?")
+                convoUntil = System.currentTimeMillis() + 12000
             }
-            val started = System.currentTimeMillis()
-            setState(LISTENING)
-            val heard = v.listen()
-            if (job?.isActive != true) setState(IDLE)
-            if (heard.isNullOrBlank()) {
-                // instant failures (no mic access, recogniser busy): back off so we don't spin
-                delay(if (System.currentTimeMillis() - started < 800) 2000 else 250)
-                continue
-            }
-            val inConvo = System.currentTimeMillis() < convoUntil
-            val cmd = extractCommand(heard, inConvo) ?: continue
-            if (cmd.isEmpty()) {
-                val j = scope.launch {
-                    setState(SPEAKING)
-                    v.speak("Yes, sir?")
-                    setState(IDLE)
-                    convoUntil = System.currentTimeMillis() + 12000
-                }
-                job = j
-                j.join()
-                continue
-            }
-            val j = scope.launch {
+        } else {
+            startJob {
                 runCommand(cmd)
                 convoUntil = System.currentTimeMillis() + 12000
             }
-            job = j
-            j.join()
         }
     }
 
     /** Used by the typing box in the app. */
     fun submit(text: String) {
-        job?.cancel()
-        job = scope.launch { runCommand(text) }
+        startJob { runCommand(text) }
     }
 
     private suspend fun runCommand(text: String) {
@@ -322,7 +325,7 @@ class JarvisService : AccessibilityService() {
             setState(SPEAKING)
             v.speak("Sorry sir, something failed. ${e.message ?: ""}")
         } finally {
-            setState(IDLE)
+            setState(idleState())
         }
     }
 
