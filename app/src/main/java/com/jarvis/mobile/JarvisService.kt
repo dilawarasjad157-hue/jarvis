@@ -29,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -57,6 +58,10 @@ class JarvisService : AccessibilityService() {
     private var brain: Brain? = null
     private var orb: Orb? = null
     private var job: Job? = null
+    private var loop: Job? = null
+
+    @Volatile
+    private var convoUntil = 0L
     private var caption: TextView? = null
     private val ui = Handler(Looper.getMainLooper())
     private val hideCaption = Runnable { caption?.animate()?.alpha(0f)?.setDuration(300)?.start() }
@@ -74,6 +79,7 @@ class JarvisService : AccessibilityService() {
         voice = v
         brain = Brain(this, Tools(this, v))
         showOrb()
+        if (Prefs.alwaysOn(this)) startLoop()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -95,6 +101,8 @@ class JarvisService : AccessibilityService() {
     }
 
     private fun cleanup() {
+        loop?.cancel()
+        loop = null
         job?.cancel()
         scope.cancel()
         try {
@@ -185,6 +193,11 @@ class JarvisService : AccessibilityService() {
             setState(IDLE)
             return
         }
+        if (loop?.isActive == true) {
+            // Always-on mode is already listening: a tap just means "talk now, no wake word needed".
+            convoUntil = System.currentTimeMillis() + 15000
+            return
+        }
         job = scope.launch {
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 v.speak("Please allow the microphone permission in the Jarvis app.")
@@ -197,6 +210,86 @@ class JarvisService : AccessibilityService() {
                 return@launch
             }
             runCommand(said)
+        }
+    }
+
+    // ------------------------------------------------------------ always-on microphone
+
+    private val wake = Regex(
+        "\\b(?:(?:hey|hi|ok|okay|aye|ae)\\s+)?(?:jarvis|jarves|jarvas|jarvice|jervis|jarwis|charvis|garvis)\\b|جارویس|جاروس|جاروِس",
+        RegexOption.IGNORE_CASE
+    )
+
+    /** null = ignore; "" = only the wake word was said; otherwise the command. */
+    private fun extractCommand(heard: String, inConvo: Boolean): String? {
+        val m = wake.find(heard)
+        if (m != null) return heard.removeRange(m.range).trim(' ', ',', '.', '!', '?', '-')
+        return if (inConvo) heard.trim() else null
+    }
+
+    fun isAlwaysOn(): Boolean = loop?.isActive == true
+
+    /** Turn the always-listening mode on/off. Call from a visible activity so Android allows the mic. */
+    fun setAlwaysOn(on: Boolean) {
+        Prefs.setAlwaysOn(this, on)
+        if (on) startLoop() else stopLoop()
+    }
+
+    /** Re-assert the foreground mic service and the loop (safe to call repeatedly). */
+    fun ensureMic() {
+        if (!Prefs.alwaysOn(this)) return
+        MicService.start(this)
+        startLoop()
+    }
+
+    fun startLoop() {
+        if (loop?.isActive == true || !Prefs.alwaysOn(this)) return
+        MicService.start(this)
+        loop = scope.launch { listenLoop() }
+    }
+
+    fun stopLoop() {
+        loop?.cancel()
+        loop = null
+        MicService.stop(this)
+        if (job?.isActive != true) setState(IDLE)
+    }
+
+    private suspend fun listenLoop() {
+        val v = voice ?: return
+        while (true) {
+            if (job?.isActive == true) { delay(300); continue }
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                delay(3000); continue
+            }
+            val started = System.currentTimeMillis()
+            setState(LISTENING)
+            val heard = v.listen()
+            if (job?.isActive != true) setState(IDLE)
+            if (heard.isNullOrBlank()) {
+                // instant failures (no mic access, recogniser busy): back off so we don't spin
+                delay(if (System.currentTimeMillis() - started < 800) 2000 else 250)
+                continue
+            }
+            val inConvo = System.currentTimeMillis() < convoUntil
+            val cmd = extractCommand(heard, inConvo) ?: continue
+            if (cmd.isEmpty()) {
+                val j = scope.launch {
+                    setState(SPEAKING)
+                    v.speak("Yes, sir?")
+                    setState(IDLE)
+                    convoUntil = System.currentTimeMillis() + 12000
+                }
+                job = j
+                j.join()
+                continue
+            }
+            val j = scope.launch {
+                runCommand(cmd)
+                convoUntil = System.currentTimeMillis() + 12000
+            }
+            job = j
+            j.join()
         }
     }
 

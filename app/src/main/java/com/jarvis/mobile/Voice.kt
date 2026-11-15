@@ -1,6 +1,15 @@
 package com.jarvis.mobile
 
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.MediaPlayer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.MessageDigest
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
@@ -24,17 +33,113 @@ class Voice(private val ctx: Context) {
     private var ttsReady = false
     private var recognizer: SpeechRecognizer? = null
     private val main = Handler(Looper.getMainLooper())
+    private var britishVoice: android.speech.tts.Voice? = null
+
+    /** Best installed British male voice (the "butler" sound), or null. */
+    private fun pickBritishMale(t: TextToSpeech): android.speech.tts.Voice? {
+        val all = try { t.voices } catch (e: Exception) { null } ?: return null
+        val gb = all.filter {
+            it.locale.language == "en" && it.locale.country == "GB" && !it.features.contains("notInstalled")
+        }
+        val maleTags = listOf("-gbd-", "-gbb-", "-rjs-", "-gbg-")
+        return gb.firstOrNull { v -> maleTags.any { v.name.contains(it, true) } && !v.name.contains("female", true) }
+            ?: gb.firstOrNull { it.name.contains("male", true) && !it.name.contains("female", true) }
+            ?: gb.firstOrNull()
+    }
 
     init {
         tts = TextToSpeech(ctx) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 ttsReady = true
-                tts?.language = Locale.US
+                tts?.language = Locale.UK
+                tts?.setPitch(0.82f)        // deeper, calmer
+                tts?.setSpeechRate(0.95f)
+                tts?.let { britishVoice = pickBritishMale(it) }
             }
         }
     }
 
-    suspend fun speak(raw: String) = suspendCancellableCoroutine<Unit> { cont ->
+    /** Speaks with ElevenLabs when a key is set (and it works), otherwise with the phone's own voice. */
+    suspend fun speak(raw: String) {
+        val clean = raw.replace(Regex("[*#`_]"), "").trim()
+        val key = Prefs.elevenKey(ctx)
+        val urdu = clean.any { it in '\u0600'..'\u06FF' }
+        if (key.isNotBlank() && clean.isNotEmpty() && !urdu) {
+            val f = withContext(Dispatchers.IO) { elevenFile(clean.take(500), key) }
+            if (f != null) {
+                playFile(f)
+                return
+            }
+        }
+        speakLocal(raw)
+    }
+
+    private var player: MediaPlayer? = null
+
+    /** Downloads (or reuses a cached) mp3 from ElevenLabs. Returns null on any problem. */
+    private fun elevenFile(text: String, key: String): File? {
+        val voiceId = Prefs.elevenVoice(ctx)
+        val dir = File(ctx.cacheDir, "voice").apply { mkdirs() }
+        val hash = MessageDigest.getInstance("MD5").digest((voiceId + text).toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val f = File(dir, "$hash.mp3")
+        if (f.exists() && f.length() > 0) return f
+        dir.listFiles()?.sortedBy { it.lastModified() }?.dropLast(60)?.forEach { it.delete() }
+        val conn = URL("https://api.elevenlabs.io/v1/text-to-speech/$voiceId?output_format=mp3_44100_64")
+            .openConnection() as HttpURLConnection
+        return try {
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 8000
+            conn.readTimeout = 20000
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("xi-api-key", key)
+            val body = JSONObject()
+                .put("text", text)
+                .put("model_id", "eleven_flash_v2_5")
+                .put("voice_settings", JSONObject().put("stability", 0.5).put("similarity_boost", 0.75))
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            if (conn.responseCode !in 200..299) return null
+            conn.inputStream.use { input -> f.outputStream().use { input.copyTo(it) } }
+            if (f.length() > 0) f else null
+        } catch (e: Exception) {
+            f.delete()
+            null
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private suspend fun playFile(f: File) = suspendCancellableCoroutine<Unit> { cont ->
+        val mp = MediaPlayer()
+        player = mp
+        fun done() {
+            try { mp.release() } catch (e: Exception) { }
+            if (player === mp) player = null
+            if (cont.isActive) cont.resume(Unit)
+        }
+        try {
+            mp.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            mp.setDataSource(f.absolutePath)
+            mp.setOnCompletionListener { done() }
+            mp.setOnErrorListener { _, _, _ -> done(); true }
+            mp.setOnPreparedListener { it.start() }
+            mp.prepareAsync()
+        } catch (e: Exception) {
+            done()
+        }
+        cont.invokeOnCancellation {
+            try { mp.release() } catch (e: Exception) { }
+            if (player === mp) player = null
+        }
+    }
+
+    private suspend fun speakLocal(raw: String) = suspendCancellableCoroutine<Unit> { cont ->
         val text = raw.replace(Regex("[*#`_]"), "").trim().take(3500)
         val t = tts
         if (t == null || !ttsReady || text.isEmpty()) {
@@ -45,7 +150,12 @@ class Voice(private val ctx: Context) {
         val urdu = text.any { it in '\u0600'..'\u06FF' }
         val loc = if (urdu) Locale("ur", "PK") else Locale.US
         val avail = t.isLanguageAvailable(loc)
-        t.language = if (avail >= TextToSpeech.LANG_AVAILABLE) loc else Locale.US
+        val bv = britishVoice
+        if (!urdu && bv != null) {
+            t.voice = bv
+        } else {
+            t.language = if (avail >= TextToSpeech.LANG_AVAILABLE) loc else Locale.UK
+        }
         val id = UUID.randomUUID().toString()
         t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {}
@@ -121,6 +231,8 @@ class Voice(private val ctx: Context) {
     /** Stop talking and listening right now (barge-in). */
     fun stopAll() {
         tts?.stop()
+        try { player?.release() } catch (e: Exception) { }
+        player = null
         main.post {
             try {
                 recognizer?.destroy()

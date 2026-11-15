@@ -25,6 +25,17 @@ object Prefs {
     fun ownerName(c: Context): String = sp(c).getString("owner", "") ?: ""
     fun setOwnerName(c: Context, v: String) = sp(c).edit().putString("owner", v.trim()).apply()
 
+    /** Optional ElevenLabs key for a studio-quality voice. Empty = phone's own voice. */
+    fun elevenKey(c: Context): String = sp(c).getString("el_key", "") ?: ""
+    fun setElevenKey(c: Context, v: String) = sp(c).edit().putString("el_key", v.trim()).apply()
+
+    /** Default: "George", the British male voice the desktop JARVIS repo uses. */
+    fun elevenVoice(c: Context): String = sp(c).getString("el_voice", "JBFqnCBsd6RMkjVDRZzb") ?: "JBFqnCBsd6RMkjVDRZzb"
+
+    /** Always-on microphone: say "Jarvis ..." any time, no button needed. */
+    fun alwaysOn(c: Context): Boolean = sp(c).getBoolean("always_on", false)
+    fun setAlwaysOn(c: Context, v: Boolean) = sp(c).edit().putBoolean("always_on", v).apply()
+
     // ---- WhatsApp auto-reply
     fun autoReply(c: Context): Boolean = sp(c).getBoolean("ar_on", false)
     fun setAutoReply(c: Context, v: Boolean) = sp(c).edit().putBoolean("ar_on", v).apply()

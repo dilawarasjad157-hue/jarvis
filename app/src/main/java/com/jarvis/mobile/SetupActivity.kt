@@ -120,7 +120,8 @@ class SetupActivity : Activity() {
         val keyBox = Ui.input(this, "Gemini API key", Prefs.apiKey(this))
         val nameBox = Ui.input(this, "Aap ka naam (auto-reply ke liye)", Prefs.ownerName(this))
         val langBox = Ui.input(this, "Bolne ki zubaan: en-US, ur-PK, hi-IN", Prefs.lang(this))
-        for (e in listOf(keyBox, nameBox, langBox)) {
+        val elBox = Ui.input(this, "ElevenLabs key (optional — behtar Jarvis awaaz)", Prefs.elevenKey(this))
+        for (e in listOf(keyBox, nameBox, langBox, elBox)) {
             e.setSingleLine()
             val lp = LinearLayout.LayoutParams(MATCH, WRAP)
             lp.topMargin = Ui.dp(this, 8)
@@ -130,6 +131,7 @@ class SetupActivity : Activity() {
             Prefs.setApiKey(this, keyBox.text.toString())
             Prefs.setOwnerName(this, nameBox.text.toString())
             Prefs.setLang(this, langBox.text.toString())
+            Prefs.setElevenKey(this, elBox.text.toString())
             Toast.makeText(this, "Saved ✔", Toast.LENGTH_SHORT).show()
             refreshAll()
         }
@@ -177,6 +179,35 @@ class SetupActivity : Activity() {
         registerBox(ar) { Prefs.autoReply(this) && notifOk() }
         refreshers.add { swOn.isChecked = Prefs.autoReply(this) }
 
+        // ---- always-on microphone
+        val ao = cardBox()
+        ao.addView(Ui.text(this, "8 · Hamesha sunna (hands-free)", 15f, Ui.TEXT, true))
+        ao.addView(Ui.text(this, "ON ho to button dabane ki zaroorat nahi: bas \"Jarvis, battery kitni hai?\" bolein. Jawab ke baad 12 second tak bina \"Jarvis\" kehe baat jari rakh sakte hain. Ek notification dikhegi aur battery thori zyada lagegi.", 12f, Ui.DIM))
+        val swAo = Switch(this)
+        swAo.text = "Mic hamesha ON"
+        swAo.setTextColor(Ui.TEXT)
+        swAo.isChecked = Prefs.alwaysOn(this)
+        swAo.setOnCheckedChangeListener { _, on ->
+            if (on && Build.VERSION.SDK_INT >= 33 && !has(Manifest.permission.POST_NOTIFICATIONS)) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3)
+            }
+            if (on && !has(Manifest.permission.RECORD_AUDIO)) {
+                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1)
+            }
+            val svc = JarvisService.instance
+            Prefs.setAlwaysOn(this, on)
+            if (svc == null) {
+                if (on) Toast.makeText(this, "Pehle Accessibility ON karein (card 3)", Toast.LENGTH_LONG).show()
+            } else {
+                svc.setAlwaysOn(on)
+            }
+        }
+        val aolp = LinearLayout.LayoutParams(MATCH, WRAP)
+        aolp.topMargin = Ui.dp(this, 10)
+        ao.addView(swAo, aolp)
+        registerBox(ao) { Prefs.alwaysOn(this) && JarvisService.instance != null }
+        refreshers.add { swAo.isChecked = Prefs.alwaysOn(this) }
+
         val tip = Ui.text(
             this,
             "Tip: Quick Settings (oopar se neeche kheench kar) mein \"JARVIS\" tile add karein — kisi bhi screen se ek tap mein Jarvis sunna shuru kar deta hai.",
@@ -193,6 +224,7 @@ class SetupActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (Prefs.alwaysOn(this)) JarvisService.instance?.ensureMic()
         refreshAll()
     }
 

@@ -150,6 +150,10 @@ class MainActivity : Activity() {
         Bus.onLine = { addBubble(it, true) }
         Bus.onState = { updateStatus() }
         updateStatus()
+        // Always-on mic: (re)start it while the app is visible, which is when Android allows it.
+        if (Prefs.alwaysOn(this) && JarvisService.instance != null) {
+            JarvisService.instance?.ensureMic()
+        }
     }
 
     override fun onResume() {

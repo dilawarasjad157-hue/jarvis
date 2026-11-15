@@ -19,7 +19,8 @@ class JarvisError(msg: String) : Exception(msg)
  * or unknown to your key, the next one is tried automatically.
  */
 class Gemini(private val ctx: Context) {
-    private val models = listOf("gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite")
+    // Fast lite model first. 2.5 models only work for old accounts; they are kept as fallbacks.
+    private val models = listOf("gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.5-flash")
     private var good = 0
 
     suspend fun generate(contents: JSONArray, system: String, tools: JSONArray?): JSONObject =
@@ -33,6 +34,9 @@ class Gemini(private val ctx: Context) {
                 val gen = JSONObject().put("maxOutputTokens", 1024)
                 if (m.contains("2.5")) {
                     gen.put("thinkingConfig", JSONObject().put("thinkingBudget", 0))
+                } else if (m.contains("latest")) {
+                    // newer Flash models think by default: keep it short so replies are fast
+                    gen.put("thinkingConfig", JSONObject().put("thinkingLevel", "low"))
                 }
                 val body = JSONObject()
                     .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
@@ -43,8 +47,8 @@ class Gemini(private val ctx: Context) {
                     .openConnection() as HttpURLConnection
                 try {
                     conn.requestMethod = "POST"
-                    conn.connectTimeout = 15000
-                    conn.readTimeout = 60000
+                    conn.connectTimeout = 10000
+                    conn.readTimeout = 30000
                     conn.doOutput = true
                     conn.setRequestProperty("Content-Type", "application/json")
                     conn.setRequestProperty("x-goog-api-key", key)
@@ -64,6 +68,9 @@ class Gemini(private val ctx: Context) {
                         throw JarvisError("Gemini ne key reject kar di ($code).")
                     }
                     // 404 / 429 / 5xx: try the next model
+                } catch (e: java.io.IOException) {
+                    // timeout / no network on this model: try the next one
+                    lastErr = "$m: ${e.message}"
                 } finally {
                     conn.disconnect()
                 }
